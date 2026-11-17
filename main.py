@@ -17,7 +17,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY,options=ClientOptions(flow_t
 #table model 생성 (table name: users) 클래스는 객체를 만들어주는 명령어임.
 class Profile(Base): #테이블을 정의함. 슈파베이스 들어가보면 users라는 테이블이 있음.
     __tablename__ = "profiles"
-    id = Column(Integer, primary_key = True, index = True)
+    id = Column(String(50), primary_key = True, index = True)
     username = Column(String(50), unique = True, index = True)
     email = Column(String(120))
     provider = Column(String(50))
@@ -49,7 +49,7 @@ def read_home():
 def save_profile(db: Session, user, username,provider):
     profile = db.get(Profile, user.id)
     if profile is None:
-        Profile(id = user.id, email = user.email, username = username, provider = provider)
+        profile = Profile(id = user.id, email = user.email, username = username, provider = provider)
         db.add(profile)
         db.commit()
         db.refresh(profile)
