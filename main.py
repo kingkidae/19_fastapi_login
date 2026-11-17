@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, Column, Integer, String # sqlalchemy는 db
 from sqlalchemy.orm import declarative_base, Session
 from pydantic import BaseModel #사용 전에 유용한지 아닌지 여부 확인하는 라이브러리
 from supabase import create_client,ClientOptions
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 DATABASE_URL = "postgresql://postgres.idncnltjwdlhkffcdmnv:nqnCMEkscYd8cyLC@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
 # 슈파베이스 프로젝트 오버뷰 해서 커넥트 누르고, 다이렉트 커넥트, 세션풀러 선택해서 스크롤 내리면 커넥트 스트링 옆에 쉐어드풀러 에 있는 링크입력하면 됨. 링크 내 [유어 패스워드]비번은 프로젝트 생성할 때 정한 비번치면 됨. 대괄호까지 없애줘야 함.
@@ -23,7 +24,7 @@ class Profile(Base): #테이블을 정의함. 슈파베이스 들어가보면 us
     provider = Column(String(50))
 
 class EmailForm(BaseModel):
-    username : str
+    username : str = ""
     email : str
     password : str
 
@@ -63,3 +64,48 @@ def signup(form: EmailForm, db: Session=Depends(get_db)):
         })
     profile = save_profile(db, res.user,form.username,"email")
     return {"id": profile.id, "email": profile.email, "username": profile.username}
+
+@app.post("/login")
+def login(form:EmailForm):
+    try: 
+        res = supabase.auth.sign_in_with_password({
+            "email": form.email,
+            "password": form.password
+        })
+    except:
+        raise HTTPException(status_code=401, detail="wrong email or password.")
+    return {
+        "access_token": res.session.access_token,
+    }
+
+@app.get("/profiles")
+def read_profiles(db: Session = Depends(get_db)):
+    profiles = db.query(Profile).all()
+    return [
+        {"id": profile.id,
+         "email": profile.email,
+         "username": profile.username,
+         "provider": profile.provider
+         }
+        for profile in profiles
+    ]
+
+bearer = HTTPBearer()
+
+@app.get("/me") #로그인한 사람의 정보만 보여주는 로직
+def me(cred: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)):
+    try:
+        user = supabase.auth.get_user(cred.credentials).user
+    except:
+        raise HTTPException(status_code=401, detail="wrong email or password.")
+
+    profile = db.get(Profile, user.id)
+
+    if profile is None:
+        raise HTTPException(status_code=401, detail="wrong email or password.")
+    return{
+        "id": profile.id,
+        "username": profile.username,
+        "email": profile.email,
+        "provider": profile.provider
+    }
