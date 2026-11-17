@@ -4,6 +4,7 @@ from sqlalchemy.orm import declarative_base, Session
 from pydantic import BaseModel #사용 전에 유용한지 아닌지 여부 확인하는 라이브러리
 from supabase import create_client,ClientOptions
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import RedirectResponse
 
 DATABASE_URL = "postgresql://postgres.idncnltjwdlhkffcdmnv:nqnCMEkscYd8cyLC@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
 # 슈파베이스 프로젝트 오버뷰 해서 커넥트 누르고, 다이렉트 커넥트, 세션풀러 선택해서 스크롤 내리면 커넥트 스트링 옆에 쉐어드풀러 에 있는 링크입력하면 됨. 링크 내 [유어 패스워드]비번은 프로젝트 생성할 때 정한 비번치면 됨. 대괄호까지 없애줘야 함.
@@ -109,3 +110,12 @@ def me(cred: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depen
         "email": profile.email,
         "provider": profile.provider
     }
+
+# 카카오 로그인
+@app.get("/login/kakao")
+def login_kakao():
+    res = supabase.auth.sign_in_with_oauth({
+        "provider": "kakao",
+        "options": {"redirect_to": "http://127.0.0.1:8000/auth/callback"}
+    })
+    return RedirectResponse(res.url)
