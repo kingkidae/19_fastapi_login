@@ -146,11 +146,18 @@ button {
   padding: 18px 24px;
 }
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--t2);
   font-weight: 900;
   letter-spacing: -0.04em;
   text-decoration: none;
   line-height: 1;
+}
+.wordmark img {
+  width: 1.3em;
+  height: 1.3em;
 }
 .topbar-user {
   font-weight: 600;
@@ -413,8 +420,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 20px 20px 16px;
-  min-height: 270px;
+  padding: 22px 22px 16px;
+  min-height: 236px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
@@ -423,13 +430,6 @@ button {
 }
 .hot-card:hover {
   border-color: var(--ink);
-}
-.hot-rank {
-  font-size: var(--t4);
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: var(--pink);
 }
 .hot-title {
   font-size: var(--t1);
@@ -451,6 +451,13 @@ button {
 .hot-card .chip {
   align-self: flex-start;
   margin-top: auto;
+}
+/* 차종 칩이 없는 카드도 좋아요·조회수 줄을 맨 아래에 맞춤 */
+.hot-card .stats {
+  margin-top: auto;
+}
+.hot-card .chip + .stats {
+  margin-top: 0;
 }
 .carousel-btn {
   position: absolute;

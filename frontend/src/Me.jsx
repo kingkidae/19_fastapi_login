@@ -29,7 +29,10 @@ function Me({ go }) {
 
   return (
     <main className="auth">
-      <a href="/" className="wordmark">차담</a>
+      <a href="/" className="wordmark">
+        <img src="/favicon.svg" alt="" />
+        차담
+      </a>
       <h1>내 정보</h1>
       {error && <p className="error">{error}</p>}
       {!me && !error && <p>불러오는 중…</p>}

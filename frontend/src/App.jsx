@@ -89,7 +89,10 @@ function App({ go }) {
 
   return (
     <main className="auth">
-      <a href="/" className="wordmark">차담</a>
+      <a href="/" className="wordmark">
+        <img src="/favicon.svg" alt="" />
+        차담
+      </a>
       <div role="tablist" className="tabs">
         {Object.entries(TABS).map(([key, label]) => (
           <button

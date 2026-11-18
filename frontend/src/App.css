@@ -186,7 +186,7 @@
 }
 
 .auth .wordmark {
-  display: inline-block;
+  display: inline-flex;
   margin-top: 32px;
 }
 .auth h1 {

@@ -107,6 +107,7 @@ export function Layout({ path, children }) {
     <>
       <header className="topbar">
         <Link to="/" className="wordmark">
+          <img src="/favicon.svg" alt="" />
           차담
         </Link>
         {me ? (

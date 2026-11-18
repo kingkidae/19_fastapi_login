@@ -95,9 +95,8 @@ function HotCarousel({ posts }) {
   return (
     <div className="carousel">
       <div className="hot-track" ref={track} onScroll={sync}>
-        {posts.map((p, i) => (
+        {posts.map((p) => (
           <Link key={p.id} to={`/post/${p.id}`} className="hot-card">
-            <span className="hot-rank">{i + 1}</span>
             <strong className="hot-title">{p.title}</strong>
             <span className="byline">
               <strong>{p.author}</strong> <time dateTime={p.created_at}>{timeAgo(p.created_at)}</time>
