@@ -1,4 +1,4 @@
-# 게시판 CRUD·댓글·좋아요·첨부파일 확인용: `uv run python test_board.py`
+# 게시판 CRUD·댓글·좋아요·첨부파일 확인용: `uv run --env-file .env python test_board.py`
 # DB는 메모리 SQLite, 로그인 사용자는 가짜라 실제 Supabase 데이터를 건드리지 않음
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -54,7 +54,7 @@ r = c.post(f"/posts/{pid}/attachments", files={"file": png})
 assert r.status_code == 201 and r.json()["url"].endswith(".png"), r.text
 assert storage_calls[-1][0] == "POST" and storage_calls[-1][1].startswith(f"attachments/{pid}/")
 assert c.post(f"/posts/{pid}/attachments", files={"file": ("x.html", b"<script>", "text/html")}).status_code == 415
-assert c.post(f"/posts/{pid}/attachments", files={"file": ("big.png", b"0" * (5 * 1024 * 1024 + 1), "image/png")}).status_code == 413
+assert c.post(f"/posts/{pid}/attachments", files={"file": ("big.png", b"0" * (main.MAX_FILE_SIZE + 1), "image/png")}).status_code == 413
 for _ in range(4):
     c.post(f"/posts/{pid}/attachments", files={"file": png})
 assert c.post(f"/posts/{pid}/attachments", files={"file": png}).status_code == 400  # 6번째

@@ -1,5 +1,7 @@
+import os
 import re
 import uuid
+from urllib.parse import urlparse
 from typing import Annotated, Literal
 import httpx
 from fastapi import FastAPI, Depends,HTTPException, Cookie, Query, UploadFile
@@ -10,17 +12,21 @@ from supabase import create_client,ClientOptions
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
 from supabase_auth.errors import AuthApiError, AuthError
+from mangum import Mangum
 
-FRONTEND_URL = "http://localhost:5173"
+# 비밀값과 주소는 환경변수에서 읽음 (로컬: backend/.env, 배포: Lambda 환경변수). 실행: uv run --env-file .env ...
+FRONTEND_URL = os.environ["FRONTEND_URL"]
+API_URL = os.environ["API_URL"]  # 브라우저가 보는 백엔드 주소. 소셜 로그인 콜백이 여기로 돌아옴
+CALLBACK_PATH = urlparse(API_URL).path + "/auth/callback"
 
-DATABASE_URL = "postgresql://postgres.idncnltjwdlhkffcdmnv:nqnCMEkscYd8cyLC@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = os.environ["DATABASE_URL"]
 # 슈파베이스 프로젝트 오버뷰 해서 커넥트 누르고, 다이렉트 커넥트, 세션풀러 선택해서 스크롤 내리면 커넥트 스트링 옆에 쉐어드풀러 에 있는 링크입력하면 됨. 링크 내 [유어 패스워드]비번은 프로젝트 생성할 때 정한 비번치면 됨. 대괄호까지 없애줘야 함.
 # 비번 까먹었을 때 슈파베이스 - 데이터베이스 - 세팅즈 - 리셋 패스워드눌리면 재설정 가능함. DB같은 경우는 평소쓰던 비번 쓰면 리스키하기 때문에 비번 재생성 만드는 창에서 제너레이트 패스워드하면 어려운 비번 알아서 세팅해줌.
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)  # Lambda가 쉬는 동안 끊긴 연결을 다시 맺음
 Base = declarative_base()
 
-SUPABASE_URL = "https://idncnltjwdlhkffcdmnv.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlkbmNubHRqd2RsaGtmZmNkbW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3NzU2NzQsImV4cCI6MjExMDM1MTY3NH0.tTE5bYbKVB09U0-9FzqfsAR0RMY04TGJMjloRsuGYk8"
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY,options=ClientOptions(flow_type="pkce"))
 
 #table model 생성 (table name: users) 클래스는 객체를 만들어주는 명령어임.
@@ -82,38 +88,43 @@ class PostForm(BaseModel):
 class CommentForm(BaseModel):
     content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
-#테이블 없을 때 생성해주는 함수
-Base.metadata.create_all(bind=engine)
-# 모든 테이블을 Supabase REST(anon 키)로 직접 못 건드리게 RLS를 켬. 이 서버는 postgres 계정이라 영향 없음
-# (profiles에는 이메일이 있어서 꺼져 있으면 공개 키만으로 가입자 이메일이 보임)
-with engine.begin() as conn:
-    for table in ("profiles", "posts", "comments", "post_likes", "attachments"):
-        conn.execute(text(f"alter table {table} enable row level security"))
-
 # 첨부파일 저장소. Supabase 무료 플랜 Storage는 1GB라 800MB까지만 쓰고 그 뒤로는 업로드를 거절
 BUCKET = "attachments"
-MAX_FILE_SIZE = 5 * 1024 * 1024
+MAX_FILE_SIZE = 4 * 1024 * 1024  # Lambda 요청 한도 6MB (파일은 전송 중 약 1.33배로 커짐)
 MAX_FILES_PER_POST = 5
 STORAGE_BUDGET = 800 * 1024 * 1024
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf",
                 "text/plain", "application/zip", "application/x-zip-compressed"}
 
-# 버킷(공개 읽기)과 정책: 로그인한 사람만 올리고, 올린 사람만 지울 수 있음
-with engine.begin() as conn:
-    conn.execute(text("""
-        insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-        values (:id, :id, true, :limit, :mimes)
-        on conflict (id) do update set public = true, file_size_limit = :limit, allowed_mime_types = :mimes
-    """), {"id": BUCKET, "limit": MAX_FILE_SIZE, "mimes": sorted(ALLOWED_MIME)})
-    policies = {
-        "attachments_insert": "for insert to authenticated with check (bucket_id = 'attachments')",
-        "attachments_select_own": "for select to authenticated using (bucket_id = 'attachments' and owner_id = auth.uid()::text)",
-        "attachments_delete_own": "for delete to authenticated using (bucket_id = 'attachments' and owner_id = auth.uid()::text)",
-    }
-    existing = {r[0] for r in conn.execute(text("select policyname from pg_policies where schemaname = 'storage' and tablename = 'objects'"))}
-    for name, rule in policies.items():
-        if name not in existing:
-            conn.execute(text(f"create policy {name} on storage.objects {rule}"))
+def setup_database():  # 테이블·RLS·Storage 버킷 준비. 여러 번 실행해도 안전
+    #테이블 없을 때 생성해주는 함수
+    Base.metadata.create_all(bind=engine)
+    # 모든 테이블을 Supabase REST(anon 키)로 직접 못 건드리게 RLS를 켬. 이 서버는 postgres 계정이라 영향 없음
+    # (profiles에는 이메일이 있어서 꺼져 있으면 공개 키만으로 가입자 이메일이 보임)
+    with engine.begin() as conn:
+        for table in ("profiles", "posts", "comments", "post_likes", "attachments"):
+            conn.execute(text(f"alter table {table} enable row level security"))
+
+    # 버킷(공개 읽기)과 정책: 로그인한 사람만 올리고, 올린 사람만 지울 수 있음
+    with engine.begin() as conn:
+        conn.execute(text("""
+            insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+            values (:id, :id, true, :limit, :mimes)
+            on conflict (id) do update set public = true, file_size_limit = :limit, allowed_mime_types = :mimes
+        """), {"id": BUCKET, "limit": MAX_FILE_SIZE, "mimes": sorted(ALLOWED_MIME)})
+        policies = {
+            "attachments_insert": "for insert to authenticated with check (bucket_id = 'attachments')",
+            "attachments_select_own": "for select to authenticated using (bucket_id = 'attachments' and owner_id = auth.uid()::text)",
+            "attachments_delete_own": "for delete to authenticated using (bucket_id = 'attachments' and owner_id = auth.uid()::text)",
+        }
+        existing = {r[0] for r in conn.execute(text("select policyname from pg_policies where schemaname = 'storage' and tablename = 'objects'"))}
+        for name, rule in policies.items():
+            if name not in existing:
+                conn.execute(text(f"create policy {name} on storage.objects {rule}"))
+
+# Lambda는 요청이 올 때마다 새로 켜질 수 있어서 매번 하지 않음 (배포 때 deploy.sh가 한 번 실행)
+if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    setup_database()
 
 #요청 받아 세션을 열고 끝나면 닫는 함수
 def get_db():
@@ -197,12 +208,12 @@ def me(profile: Profile = Depends(current_profile)):
 def login_social(provider: Literal["kakao", "google"]):
     res = supabase.auth.sign_in_with_oauth({
         "provider": provider,
-        "options": {"redirect_to": "http://127.0.0.1:8000/auth/callback"}
+        "options": {"redirect_to": API_URL + "/auth/callback"}
     })
     # PKCE 검증값을 로그인 시작한 브라우저 쿠키에 묶음: 다른 브라우저의 code로는 콜백이 통과 못 함
     verifier = supabase.auth._storage.get_item(f"{supabase.auth._storage_key}-code-verifier").partition("/")[0]
     redirect = RedirectResponse(res.url)
-    redirect.set_cookie("pkce", verifier, max_age=600, httponly=True, samesite="lax", path="/auth/callback")
+    redirect.set_cookie("pkce", verifier, max_age=600, httponly=True, samesite="lax", path=CALLBACK_PATH)
     return redirect
 
 # 소셜 로그인 후 Supabase가 돌려보내는 곳: code를 세션으로 바꾸고 프로필 저장 후 프론트 메인으로 보냄
@@ -223,7 +234,7 @@ def auth_callback(code: str | None = None, pkce: str | None = Cookie(None), db: 
     save_profile(db, user, name, provider)
     # 토큰은 # 뒤에 붙여야 서버 로그/Referer로 새지 않음
     redirect = RedirectResponse(f"{FRONTEND_URL}/#token={res.session.access_token}")
-    redirect.delete_cookie("pkce", path="/auth/callback")  # 한 번만 사용
+    redirect.delete_cookie("pkce", path=CALLBACK_PATH)  # 한 번만 사용
     return redirect
 
 
@@ -385,7 +396,7 @@ def upload_attachment(post_id: int, file: UploadFile, cred: HTTPAuthorizationCre
     if not data:
         raise HTTPException(status_code=400, detail="빈 파일은 올릴 수 없어요.")
     if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="파일은 하나에 5MB까지 올릴 수 있어요.")
+        raise HTTPException(status_code=413, detail="파일은 하나에 4MB까지 올릴 수 있어요.")
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(status_code=415, detail="이미지(JPG, PNG, GIF, WEBP), PDF, TXT, ZIP만 올릴 수 있어요.")
     if db.scalar(select(func.count()).where(Attachment.post_id == post_id)) >= MAX_FILES_PER_POST:
@@ -413,3 +424,7 @@ def delete_attachment(attachment_id: int, cred: HTTPAuthorizationCredentials = D
     storage_request("DELETE", BUCKET, cred.credentials, json={"prefixes": [attachment.path]})
     db.delete(attachment)
     db.commit()
+
+
+# AWS Lambda 진입점. CloudFront가 /api/* 를 넘겨주므로 앞의 /api를 떼고 FastAPI로 전달
+handler = Mangum(app, api_gateway_base_path="/api", lifespan="off")

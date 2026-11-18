@@ -1,4 +1,4 @@
-# 소셜 로그인 콜백 확인용: `uv run python test_callback.py`
+# 소셜 로그인 콜백 확인용: `uv run --env-file .env python test_callback.py`
 # Supabase 응답은 가짜, DB는 메모리 SQLite라 실제 계정/DB를 건드리지 않음
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
